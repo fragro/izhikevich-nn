@@ -29,6 +29,14 @@ num_synapses = 5
 weights = numpy.zeros((num_neurons, num_synapses)).astype(numpy.float32)
 c = numpy.zeros((num_neurons, 1)).astype(numpy.float32)
 
+#fire events
+##time
+##threadid
+
+#dopamine array
+
+
+
 # pn_gpu = gpuarray.to_gpu(per_neuron)
 
 # Alloc memory on GPU
@@ -51,3 +59,27 @@ mod = SourceModule("""
 
 func = mod.get_function('update_weights')
 func(weights_gpu, c_gpu, block=(4,4,1))
+
+
+"""kernels list:
+
+	input kernel
+	fire kernel
+	fire times: check if a neuron is above the threshold, register fire in array
+	stdp: adjust internal C value based on STDP
+	array of length N for neuron classes, registering output
+
+
+***   arrays list:
+
+   2D synaptic strength
+   fire times
+   fire boolean
+   input (combinations of fire_boolean*syanptic strength) + stimuli
+   a = timescale of the recovery variable
+   b = sensitivity of the recovery variable
+   c = after-spike reset of the membrane potential
+   d = after-spike reset of the recovery variable u
+   v = nueron voltage
+   u = recovery variable
+
