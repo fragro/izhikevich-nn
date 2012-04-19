@@ -10,9 +10,6 @@ import numpy
 
 """
 parser = argparse.ArgumentParser(description="Simulate a network of neurons "+
-=======
-parser = argparse.ArgumentParser(description="Simulate a network of neurons " +
->>>>>>> b12e7453fabaa93f7829895dfac870dd6155a6ad
     "with small-world connectivity.")
 parser.add_argument('num_neurons', metavar='neurons',
     help='the number of neurons to simulate')
