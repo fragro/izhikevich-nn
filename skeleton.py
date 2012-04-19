@@ -7,10 +7,14 @@ from pycuda.compiler import SourceModule
 
 import argparse
 import numpy
+
 """
 parser = argparse.ArgumentParser(description="Simulate a network of neurons "+
+=======
+parser = argparse.ArgumentParser(description="Simulate a network of neurons " +
+>>>>>>> b12e7453fabaa93f7829895dfac870dd6155a6ad
     "with small-world connectivity.")
-parser.add_argument('num_neurons', metavar='neurons', 
+parser.add_argument('num_neurons', metavar='neurons',
     help='the number of neurons to simulate')
 parser.add_argument('num_synapses', metavar='synapses',
     help='the number of presynaptic and postsynaptic connections per neuron')
@@ -26,7 +30,8 @@ num_synapses = 5
 # Set up necessary arrays
 # Internal neuron variables. Synaptic weights and c.
 weights = numpy.zeros((num_neurons, num_synapses)).astype(numpy.float32)
-c       = numpy.zeros((num_neurons, 1)).astype(numpy.float32)
+c = numpy.zeros((num_neurons, 1)).astype(numpy.float32)
+
 # pn_gpu = gpuarray.to_gpu(per_neuron)
 
 # Alloc memory on GPU
@@ -43,7 +48,7 @@ cuda.memcpy_htod(c_gpu, c)
 mod = SourceModule("""
     __global__ void update_weights(float *weights, float *c)
     {
-       return; 
+       return;
     }
 """)
 
