@@ -5,6 +5,7 @@ from pycuda import gpuarray
 from pycuda.compiler import SourceModule
 from pycuda.driver import device_attribute as A
 from DemoMetaMatrixmulCheetah import matrixmul_opt
+from pycuda.elementwise import ElementWiseKernel
 import pycuda.autoinit
 
 import argparse
@@ -43,21 +44,70 @@ num_neurons
 # Set up necessary arrays
 # Internal neuron variables. Synaptic weights and c.
 # in weights, rows are presyn & cols are psotsyn
+
+# Synapses per neuron
+synapses_per = 100
 try:
     weights = numpy.ones((num_neurons, num_neurons)).astype(numpy.float32)
 except ValueError:
     sys.stderr.write("There is not enough memory for %i neurons. Try again with fewer neurons.\n"%(num_neurons))
-c = numpy.ones((1, num_neurons)).astype(numpy.uint32)
+c = numpy.ones((num_neurons, num_neurons)).astype(numpy.uint32)
 
 # fire events - these are boolean but use floats to avoid type conflicts
 fired = numpy.zeros((1, num_neurons)).astype(numpy.float32)
 # fire time
-fire_time = numpy.ones((1, num_neurons)).astype(numpy.uint32)
+fire_time = numpy.ones((num_neurons, 1)).astype(numpy.uint32)
+# for each neuron, indices of postsynaptic neurons
+post = numpy.zeros((num_neurons, synapses_per)).astype(numpy.float32)
 #threadid - provided by CUDA
 
 #dopamine
 dopamine = 0
+
+# Time constant for dopamine
+tau_c = 500.0
+eligibility_trace = -1
 #### /INITIALIZATION ####
+
+#### STDP KERNEL ####
+stdp_krnl = ElementWiseKernel(
+    "float dopamine, float *c, int fire_time, int *fired, float *weights, int *post, float tau_c",
+    """
+    #define SYN_PER %(synapses_per)i
+    #define NUM_NEU %(num_neurons)i
+    #define TAU_C %(tau_c)f
+
+    float syn; 
+    int both_fired;
+    int tau;
+    int cur_po;
+    int old_c;
+    
+    /* for each postsynaptic neuron */
+    for(int j = 0; j < SYN_PER; j++) {
+      cur_po = post[j*NUM_NEU+i];
+      syn = weights[cur_po*NUM_NEU+i];
+      /* BEGIN IF */
+      both_fired = (fired[i]>0 && fired[cur_po]);
+      tau = fire_time[cur_po]-fire_time[i];
+      /* n_plus = 0.3, n_minus = 3.0 */
+      old_c = c[cur_po*NUM_NEU+i];
+      dc = (
+        -old_c/TAU_C
+        + (tau > 0)*((4-syn)*0.3)*2.7182^(-tau / 10.0)
+        + (tau < 0)*((syn)*3.0)*2.7182^(-au / 10.0)
+        )*both_fired 
+      c[cur_po*NUM_NEU+i] = old_c + dc;
+      syn += old_c + dc;
+      weights[cur_po*NUM_NEU+i] = (syn > 4 || syn < 0)*syn + (syn > 4)*4;
+
+      /* END IF */
+    }
+
+    """%{"synapses_per":synapses_per, "tau_c":tau_c, 
+          "num_neurons":num_neurons}
+) 
+#### /STDP KERNEL ####
 
 #### MAIN LOOP ####
 for i in xrange(sim_length):

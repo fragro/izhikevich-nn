@@ -39,7 +39,7 @@ num_neurons
 # Set up necessary arrays
 # Internal neuron variables. Synaptic weights and c.
 #weights = numpy.zeros((num_neurons, num_synapses)).astype(numpy.float32)
-weights = numpy.zeros((num_neurons, num_neurons)).astype(numpy.float32)
+weights = numpy.array(range(25)).reshape(5,5).astype(numpy.float32)
 c = numpy.zeros((num_neurons, 1)).astype(numpy.float32)
 
 #fire events
@@ -51,12 +51,10 @@ fire_time = numpy.zeros((num_neurons, 1)).astype(numpy.float32)
 #dopamine array
 dopamine = 0
 
-# Create GPUarrays
-weights_g = gpuarray.to_gpu(weights)
 
 # pn_gpu = gpuarray.to_gpu(per_neuron)
 
-"""
+
 # Alloc memory on GPU
 weights_gpu = cuda.mem_alloc(weights.nbytes)
 # Transfer data to GPU
@@ -66,19 +64,24 @@ cuda.memcpy_htod(weights_gpu, weights)
 c_gpu = cuda.mem_alloc(c.nbytes)
 # Transfer data to GPU
 cuda.memcpy_htod(c_gpu, c)
-"""
+
 
 # Set up a source module
 mod = SourceModule("""
     __global__ void update_weights(float *weights, float *c)
     {
-       return;
+        #define NUM_NEU %(num_neurons)i
+        int i = blockIdx.x*blockDim.x+threadIdx.x;
+        int j = blockIdx.y*blockDim.y+threadIdx.y;
+        weights[NUM_NEU*j+i] = (1==1)*5;
+        return;
     }
-""")
+"""%{"num_neurons":num_neurons})
 
 func = mod.get_function('update_weights')
-func(weights_gpu, c_gpu, block=(4,4,1))
-
+func(weights_gpu, c_gpu, block=(5,5,1))
+cuda.memcpy_dtoh(weights, weights_gpu)
+print weights
 
 """kernels list:
 
@@ -101,4 +104,4 @@ func(weights_gpu, c_gpu, block=(4,4,1))
    d = after-spike reset of the recovery variable u
    v = nueron voltage
    u = recovery variable
-
+"""
