@@ -73,7 +73,7 @@ mod = SourceModule("""
         #define NUM_NEU %(num_neurons)i
         int i = blockIdx.x*blockDim.x+threadIdx.x;
         int j = blockIdx.y*blockDim.y+threadIdx.y;
-        weights[NUM_NEU*j+i] = (1==1)*5;
+        weights[NUM_NEU*j+i] = (i > 0 && 5/i);
         return;
     }
 """%{"num_neurons":num_neurons})
