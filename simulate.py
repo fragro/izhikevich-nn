@@ -26,91 +26,11 @@ def split(line):
         for x in pattern.findall(line.rstrip(',') + ',')]
 
 
-kernel_code_template = """
-  __global__ void firetime_init(float *a, float *b)
-  {
-    int idx = threadIdx.x;
-    if(a[idx] > 30){
-      b[idx] = 1;
-    }
-  };
-
-  __global__ void firetime_iter(float *a, float *b, float c)
-  {
-    int idx = threadIdx.x;
-    if(a[idx] == 1){
-      b[idx] = c;
-    }
-  }
-__global__ void MatrixMulKernel(float *A, float *B, float *C)
-{
-
-  const uint wA = %(MATRIX_SIZE)s;
-  const uint wB = %(MATRIX_SIZE)s;  
-  
-  // Block index
-  const uint bx = blockIdx.x;
-  const uint by = blockIdx.y;
-
-  // Thread index
-  const uint tx = threadIdx.x;
-  const uint ty = threadIdx.y;
-
-  // Index of the first sub-matrix of A processed by the block
-  const uint aBegin = wA * %(BLOCK_SIZE)s * by;
-  // Index of the last sub-matrix of A processed by the block
-  const uint aEnd = aBegin + wA - 1;
-  // Step size used to iterate through the sub-matrices of A
-  const uint aStep = %(BLOCK_SIZE)s;
-
-  // Index of the first sub-matrix of B processed by the block
-  const uint bBegin = %(BLOCK_SIZE)s * bx;
-  // Step size used to iterate through the sub-matrices of B
-  const uint bStep = %(BLOCK_SIZE)s * wB;
-
-  // The element of the block sub-matrix that is computed
-  // by the thread
-  float Csub = 0;
-  // Loop over all the sub-matrices of A and B required to
-  // compute the block sub-matrix
-  for (int a = aBegin, b = bBegin;
-       a <= aEnd;
-       a += aStep, b += bStep) 
-    {
-      // Shared memory for the sub-matrix of A
-      __shared__ float As[%(BLOCK_SIZE)s][%(BLOCK_SIZE)s];
-      // Shared memory for the sub-matrix of B
-      __shared__ float Bs[%(BLOCK_SIZE)s][%(BLOCK_SIZE)s];
-
-      // Load the matrices from global memory to shared memory;
-      // each thread loads one element of each matrix
-      As[ty][tx] = A[a + wA * ty + tx];
-      Bs[ty][tx] = B[b + wB * ty + tx];
-      // Synchronize to make sure the matrices are loaded
-      __syncthreads();
-
-      // Multiply the two matrices together;
-      // each thread computes one element
-      // of the block sub-matrix
-      for (int k = 0; k < %(BLOCK_SIZE)s; ++k)
-    Csub += As[ty][k] * Bs[k][tx];
-
-      // Synchronize to make sure that the preceding
-      // computation is done before loading two new
-      // sub-matrices of A and B in the next iteration
-      __syncthreads();
-    }
-
-  // Write the block sub-matrix to global memory;
-  // each thread writes one element
-  const uint c = wB * %(BLOCK_SIZE)s * by + %(BLOCK_SIZE)s * bx;
-  C[c + wB * ty + tx] = Csub;
-}
-"""
-
 ###THIS FUNCTION ALSO NEEDS TO BE REDONE AS A KERNEL
 def getInput(t, stimulus_times, neural_input, inputset, excite):
     if stimulus_times.count(t) == 1:
+        return None, 10
+        print '1' * 100
         stimulus_times.remove(t)
         r = rand.randint(0, len(inputset) - 1)
         inp = inputset[r]
@@ -173,25 +93,6 @@ max_threads = attr[A.MAX_THREADS_PER_MULTIPROCESSOR]*num_MPs
 num_neurons
 """
 
-#### INITIALIZATION ####
-# define the (square) matrix size
-MATRIX_SIZE = 4
-
-# define size of blocks and tiles sub-matrix 
-# (we assume that the block size is same as tile size)
-TILE_SIZE = 4
-BLOCK_SIZE = TILE_SIZE
-
-# get the kernel code from the template 
-# by specifying the constants MATRIX_SIZE and BLOCK_SIZE
-kernel_code = kernel_code_template % { 
-    'MATRIX_SIZE': num_neurons,
-    'BLOCK_SIZE': BLOCK_SIZE,
-    }
-
-# compile the kernel code
-mod = pycuda.compiler.SourceModule(kernel_code)
-
 #dopamine
 synapses_per = 100
 dopamine = 0
@@ -199,8 +100,8 @@ excite = int(.8 * num_neurons)
 inhib = int(.2 * num_neurons)
 num_neurons_per_feature = 50
 num_neurons_per_input = 1
-tao_c = 500.0 #time constant for the STDP
-tao_d = 100.0  #time constant for the dopamine
+tau_c = 500.0 #time constant for the STDP
+tau_d = 100.0  #time constant for the dopamine
 reward_wait_time = 500
 stimulus_interval = 500
 class0 = 0
@@ -216,55 +117,58 @@ except ValueError:
     sys.stderr.write("There is not enough memory for %i neurons. Try again with fewer neurons.\n"%(num_neurons))
 
 # fire events - these are boolean but use floats to avoid type conflicts
-fired_cpu = numpy.zeros((1, num_neurons)).astype(numpy.float32)
+fired_cpu = numpy.array([[0] for i in xrange(num_neurons)]).astype(numpy.float32)
 
 #TESTING
-fired_cpu = numpy.array(map(lambda x: int(x>=.6) , [rand.random() for i in xrange(num_neurons)])).astype(numpy.float32)
+fired_cpu = numpy.array([[rand.randint(0,1)] for i in xrange(num_neurons)]).astype(numpy.float32)
 fired = gpuarray.to_gpu(fired_cpu)
 
 inputs = gpuarray.zeros((num_neurons,num_neurons), numpy.float32)
 
-# fire time
-fire_time = numpy.ones((1, num_neurons)).astype(numpy.uint32)
-#threadid - provided by CUDA
 
 input_delivered = False
 
 rand_exc = curand(excite, dtype=numpy.float32)
 rand_inh = curand(inhib, dtype=numpy.float32)
-firetimes = gpuarray.zeros(excite+inhib, dtype=numpy.float32)
+firetimes = gpuarray.zeros_like(fired)
 
-v = -65 * numpy.ones(excite+inhib)
+v = numpy.array([[-65] for i in xrange(excite+inhib)])
 u = v.copy()
-v = gpuarray.to_gpu(numpy.array(v))
+v = gpuarray.to_gpu(numpy.array(v).astype(numpy.float32))
 
-a = [0.02 for i in xrange(excite)]
-a.extend([0.02+0.08*rand.random() for i in xrange(inhib)])
-a = gpuarray.to_gpu(numpy.array(a))
+#for testing purposes, never changes
+testbay = gpuarray.to_gpu(numpy.array([[30] for i in xrange(num_neurons)]))
+
+a = [[0.02] for i in xrange(excite)]
+a.extend([[0.02+0.08*rand.random()] for i in xrange(inhib)])
+a = gpuarray.to_gpu(numpy.array(a).astype(numpy.float32))
 
 #timescale of the recovery variable
-b = [0.02 for i in xrange(excite)]
-b.extend([0.25-0.05*rand.random() for i in xrange(inhib)])
-u *= b[0]
-u = gpuarray.to_gpu(u)
-b = gpuarray.to_gpu(numpy.array(b))
+b = [[0.2] for i in xrange(excite)]
+b.extend([[0.25-0.05*rand.random()] for i in xrange(inhib)])
+u = gpuarray.to_gpu(u * 0.02)
+b = gpuarray.to_gpu(numpy.array(b).astype(numpy.float32))
 
-c = [-65+15*pow(rand.random(),2) for i in xrange(excite)]
-c.extend([-65 for i in xrange(inhib)])
-c = gpuarray.to_gpu(numpy.array(c))
+c = [[-65+15*pow(rand.random(),2)] for i in xrange(excite)]
+c.extend([[-65] for i in xrange(inhib)])
+c = gpuarray.to_gpu(numpy.array(c).astype(numpy.float32))
 #sensitivity of the recovery variable
 
 
+post = [[0 for i in xrange(num_neurons)] for j in xrange(synapses_per)]
+pe_left = [synapses_per]*num_neurons
+
 #mV -- after-spike reset of the membrane potential
-d = [8-6*pow(rand.random(),2) for i in xrange(excite)]
-d.extend([2 for i in xrange(inhib)])
-d = gpuarray.to_gpu(numpy.array(d))
+d = [[8-6*pow(rand.random(),2)] for i in xrange(excite)]
+d.extend([[2] for i in xrange(inhib)])
+d = gpuarray.to_gpu(numpy.array(d).astype(numpy.float32))
 
 
 #### /INITIALIZATION ####
 neural_input, inputset, eligible_neurons, classes = initInput(excite, trainfile, num_neurons_per_input)
 #Need some times for stimulus to occur
-stimulus_times = range(100,sim_length,stimulus_interval)
+stimulus_times = range(50, sim_length,50)
+
 pp.pprint(stimulus_times)
 
 ####CUDA SPECIFIC
@@ -272,18 +176,6 @@ BLOCK_X=4
 BLOCK_Y=4
 block_size = 16
 work_size = 1
-###KERNEL FOR DETERMINGING THE INPUT
-
-firing_v_comb = ElementwiseKernel(
-        "float *v, float *f, float *c",
-        "v[i] = f[i] * c[i] + !f[i] * v[i]",
-        "linear_combination")
-
-
-firing_u_comb = ElementwiseKernel(
-        "float *v, float *f, float *u, float *d",
-        "u[i] = f[i] * (u[i]+d[i]) + !f[i] * u[i]",
-        "linear_combination")
 
 # DEBUG: Randomly populate post
 # Generate list of postsynaptic connections
@@ -317,7 +209,7 @@ for num,col in enumerate(post):
     pe_left[r[j]] -= 1
   post[num] = r
 post = numpy.array(post).astype(numpy.uint32)
-
+post_gpu = gpuarray.to_gpu(post)
 
 # Time constant for dopamine
 eligibility_trace = -1
@@ -325,8 +217,8 @@ eligibility_trace = -1
 
 #### STDP KERNEL ####
 stdp_krnl = ElementwiseKernel(
-    "float dopamine, float *c, int *fired, int *fire_time,"+
-      "float *weights, int *post",
+    "float dopamine, float *c, float *fired, float *fire_time,"+
+      "float *weights, float *post",
     """
     #define SYN_PER %(synapses_per)i
     #define NUM_NEU %(num_neurons)i
@@ -370,13 +262,14 @@ stdp_krnl = ElementwiseKernel(
 
 #### MAIN LOOP ####
 for t in xrange(sim_length):
+
+    #print '-' * 100
     # Calculate input
     # Input for a neuron is the sum of the synaptic weights of all neurons that
     # fired onto it
     #### also need to include input from basic.train
-    inp, arr = getInput(i, stimulus_times, neural_input, inputset, excite)
-    if inp != None:
-      print arr
+    inp, arr = getInput(t, stimulus_times, neural_input, inputset, excite)
+    #print 'STIMETIMES: ' + str(inputset)
 
     ################################################################################
     if inp != None and not input_delivered:
@@ -391,31 +284,37 @@ for t in xrange(sim_length):
 
     # should break this down into a kernel as well
     # determining the input is a bit more complex 
-    inhibitory = [5 * rand.random() for i in xrange(inhib)]
-
+    inhibitory = [[2.5 * rand.random()] for i in xrange(inhib)]
 
     if (arr == None and not input_delivered) or input_delivered:
-        excitatory = [5 * rand.random() for i in xrange(excite)]
+        excitatory = [[5 * rand.random()] for i in xrange(excite)]
 
     elif arr != None and not input_delivered: 
-        excitatory = [arr + 5 for i in xrange(excite)]
+        print arr
+        excitatory = [[arr + 5] for i in xrange(excite)]
     excitatory.extend(inhibitory)
-    input_vector = gpuarray.to_gpu(numpy.array(excitatory)) 
 
     #### Input is ready to go, now we need to calculate the total inputs/Izekivich model
     #    numpy.array(map(lambda x: x>=30 , v[0:excite+inhib])) 
     if t == 0:
+        input_vector = gpuarray.to_gpu(numpy.array(excitatory)) 
         #MATRIX INPUT OP\
-        func = mod.get_function("firetime_init")
-        func(v, fired, block=(BLOCK_X,BLOCK_Y,1))
+        print testbay.shape
+        print v.shape
+        fired = v > testbay
+
         #print fired * weights
     #update firetimes
     else:
-        func = mod.get_function("firetime_iter")
-        #func(fired, firetimes, block=(BLOCK_X,BLOCK_Y,1))
+        input_vector.set(numpy.array(excitatory))
+        fired = v > testbay
+        #print firetimes.shape
+        #print fired.shape
+        firetimes = -(fired - 1) * firetimes + t * fired
 
-    firing_v_comb(v, fired, c)
-    firing_u_comb(v, fired, u, d)
+
+    v = fired * c + -(fired-1) * v
+    u = fired * (u+d) + -(fired-1) * u
 
     #inputs = matrixmul_opt(weights, fired)
     #print inputs
@@ -426,7 +325,7 @@ for t in xrange(sim_length):
     # # call the kernel on the card
     # matrixmul(
     #     # inputs
-    #     fired, weights, 
+    #     weights, fired, 
     #     # output
     #     inputs, 
     #     # grid of multiple blocks
@@ -434,30 +333,67 @@ for t in xrange(sim_length):
     #     # block of multiple threads
     #     block = (TILE_SIZE, TILE_SIZE, 1), 
     # )
-    print (fired * weights)
-    print weights_cpu[0][0]
-    inputs = (fired * weights) + input_vector
-    print inputs
-    #print inputs == weights * fired #this is false always... random?
 
-    # print  inputs_cpu - inputs.get()
-    #print "L2 norm:", la.norm(inputs_cpu - inputs.get())
-    #print weights_cpu * fired_cpu
-    #print sum(fired.get(numpy.empty((num_neurons), numpy.float32)))
-    #print pp.pprint(sum(inputs.get(numpy.empty((num_neurons,num_neurons), numpy.float32))[4]))
-    #print inputs.get(numpy.empty((num_neurons,num_neurons), numpy.float32))[0]
-    print v.shape
-    print u.shape
-    print inputs.shape
-    v += 0.04 * pow(v,2) + 5 * v + 140 - u + inputs
+    new_inputs, gpu_time = matrixmul_opt(weights_cpu, fired_cpu)
+    if t == 0:
+      inputs = gpuarray.to_gpu(new_inputs.astype(numpy.float32))
+    else:
+      inputs.set(new_inputs.astype(numpy.float32))
+
+    next_input = inputs + input_vector
+
+    #print (fired * weights)
+    #print weights_cpu[0][0]
+    # print '-' * 80
+    # print fired.shape
+    # print weights.shape
+    # #print (weights * fired) + input_vector
+    # #inputs = (fired * weights) + input_vector
+    # #print inputs == weights * fired #this is false always... random?
+    # print inputs
+
+    # # print  inputs_cpu - inputs.get()
+    # #print "L2 norm:", la.norm(inputs_cpu - inputs.get())
+    # #print weights_cpu * fired_cpu
+    # #print sum(fired.get(numpy.empty((num_neurons), numpy.float32)))
+    # #print pp.pprint(sum(inputs.get(numpy.empty((num_neurons,num_neurons), numpy.float32))[4]))
+    # #print inputs.get(numpy.empty((num_neurons,num_neurons), numpy.float32))[0]
+    # print v.shape
+    # print u.shape
+    # print inputs.shape
+    #print v
+    #print (b * v - u)
+
+    v += 0.5 * (0.04 * pow(v,2) + 5 * v + 140 - u + next_input)
+    v += 0.5 * (0.04 * pow(v,2) + 5 * v + 140 - u + next_input)
+
     u = u + a * (b * v - u)
 
-    stdp_krnl(dopamine, c, fired, fire_times, weights_gpu, post_gpu)
+    print sum(fired.get())
+    
+    # itr = 0
+    # for h in v.get():
+    #   if itr < excite:
+    #     print str(itr) + '-' * 50
+    #     print 0.04 * pow(v.get()[itr],2) + 5 * v.get()[itr] + 140 - u.get()[itr] + next_input.get()[itr]
+    #     print 'v: ' + str(v.get()[itr])
+    #     print 'u: ' + str(u.get()[itr])
+    #     print fired.get()[itr]
+    #     print next_input.get()[itr]
+    #   itr+=1
+    stdp_krnl(dopamine, c, fired, firetimes, weights, post_gpu)
 
+    #print sum(fired.get())
+    #print v
+
+
+    # print weights.get()
+    # print fired.get()
     #should have the new voltages now
 
+    print 'ITERATION:'+ str(t)
 
-
+print firetimes
 """
 kernels list:
 
