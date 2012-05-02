@@ -8,6 +8,7 @@ from DemoMetaMatrixmulCheetah import matrixmul_opt
 import pycuda.autoinit
 from pycuda.elementwise import ElementwiseKernel
 from pycuda.curandom import rand as curand
+from create_smallworld import create_smallworld
 
 import pprint
 import argparse
@@ -111,7 +112,8 @@ trainfile = 'basic.train'
 # Internal neuron variables. Synaptic weights and c.
 # in weights, rows are presyn & cols are psotsyn
 try:
-    weights_cpu = numpy.array([[rand.random() for k in xrange(num_neurons)]  for h in xrange(num_neurons)]).astype(numpy.float32)
+    #weights_cpu = numpy.array([[rand.random() for k in xrange(num_neurons)]  for h in xrange(num_neurons)]).astype(numpy.float32)
+    weights_cpu = numpy.array(create_smallworld(num_neurons, synapses_per)).astype(numpy.float32)
     weights = gpuarray.to_gpu(weights_cpu)
 except ValueError:
     sys.stderr.write("There is not enough memory for %i neurons. Try again with fewer neurons.\n"%(num_neurons))

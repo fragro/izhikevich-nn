@@ -1,0 +1,5 @@
+You will need python-libigraph to run the small world generation. 
+Run these to install it.
+sudo apt-get install libigraph0-dev python-setuptools
+sudo easy-install python-igraph
+`
