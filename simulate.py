@@ -158,7 +158,7 @@ c = gpuarray.to_gpu(numpy.array(c).astype(numpy.float32))
 #sensitivity of the recovery variable
 
 
-post = [[0 for i in xrange(num_neurons)] for j in xrange(synapses_per)]
+#post = [[0 for i in xrange(num_neurons)] for j in xrange(synapses_per)]
 pe_left = [synapses_per]*num_neurons
 
 #mV -- after-spike reset of the membrane potential
@@ -182,6 +182,7 @@ work_size = 1
 
 # DEBUG: Randomly populate post
 # Generate list of postsynaptic connections
+"""
 for num,col in enumerate(post):
   valid = 0
   # For each prospective neuron
@@ -211,6 +212,30 @@ for num,col in enumerate(post):
   for j in xrange(len(r)):
     pe_left[r[j]] -= 1
   post[num] = r
+"""
+post = numpy.ones((num_neurons, synapses_per))
+post *= -1
+# I did this with list comprehensions first,
+# but that doesn't produce a square array :(
+for i in xrange(len(weights_cpu)):
+    k = 0
+    for j in xrange(len(weights_cpu[i])):
+        if weights_cpu[i][j] != 0:
+            post[i][k] = j
+            k += 1
+
+"""
+# Check results
+for i in xrange(len(post)):
+    for j in post[i]:
+        if weights_cpu[i][j] == 0 and j != -1:
+            print "OH NOES"
+            raw_input()
+"""
+
+print(len(post))
+print(len(post[0]))
+        
 post = numpy.array(post).astype(numpy.uint32)
 post_gpu = gpuarray.to_gpu(post)
 
