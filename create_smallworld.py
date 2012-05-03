@@ -20,17 +20,22 @@ def create_smallworld(num_neurons, max_synapses, print_stats=False):
 
     if print_stats:
         print "After pruning"
+        print "Clustering coefficient: ",
         print graph.transitivity_undirected()
+        print "Average path length: ",
         print graph.average_path_length()
+        """
+        # Print average number of nodes
         adjl = graph.get_adjlist()
         q = [len(i) for i in adjl]
         print float(sum(q))/len(q)
         print max(q)
+        """
 
     # Get adjacency matrix and transform into weights
     adj_mat = graph.get_adjacency()
     return [[n*random.random() if n>0 else 0 for n in row] for row in adj_mat]
 
 if __name__ == '__main__':
-    a = create_smallworld(1000,100)
+    a = create_smallworld(1000,100, print_stats=True)
     print a[0][:50]
