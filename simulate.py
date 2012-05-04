@@ -27,45 +27,55 @@ def split(line):
         for x in pattern.findall(line.rstrip(',') + ',')]
 
 
+def DA(t, reward_time, reward):
+    if reward:
+        return 0.5 / 10.0
+    else:
+        return 0.0
+
 ###THIS FUNCTION ALSO NEEDS TO BE REDONE AS A KERNEL
-def getInput(t, stimulus_times, neural_input, inputset, excite):
-    if stimulus_times.count(t) == 1:
-        return None, 10
-        print '1' * 100
-        stimulus_times.remove(t)
-        r = rand.randint(0, len(inputset) - 1)
-        inp = inputset[r]
-        arr = numpy.zeros(excite)
-        for i in range(len(inp[1])):
-            #for each feature in this input set
-            if int(inp[1][i]) == 1:
-                for k in neural_input[i]:
-                    arr[k] = arr[k]+ 10
-        return inp, arr
-    else: return None, None
+def checkOutput(fired, neural_output):
+    val = fired * neural_output[0]
+    inc0 = sum(val.get().flatten())
+    val = fired * neural_output[1]
+    inc1 = sum(val.get().flatten())
+    return inc0, inc1
+
+
+###THIS FUNCTION ALSO NEEDS TO BE REDONE AS A KERNEL
+def getInput(t, stims, classes):
+    if stims[t] != -1:
+        clss = int(stims[t])
+        return classes[clss] * 10, clss
+    else:
+        return None, None
+
+
+def initOutput(eligible_neurons, classes, num_neurons_per_feature):
+    neural_output = {}
+    for i, v in classes.items():
+        binarr = numpy.zeros(excite+inhib)
+        for j in range(num_neurons_per_feature):
+            idx = eligible_neurons.pop(rand.randint(0, len(eligible_neurons) - 1))
+            binarr[idx] = 1
+        neural_output[i] = gpuarray.to_gpu(binarr)
+    return neural_output
 
 #returns the indexes of the features as mapped onto the neural network and inputset of data, and remaing neurons
-def initInput(excite, trainfile, num_neurons_per_feature):
-    inputset = []
+def initInput(excite, trainfile, num_neurons_per_input):
     f = open(trainfile, 'r')
-    features_set = False
-    neural_input = []
-    classes = []
+    classes = {}
     for i in f:
         j = split(i.strip('\n').strip('\r'))
         eligible_neurons = range(excite)
-        if not features_set:
-            for binary in j[1:]:  # now we get the indeex of x number random neurons for each of the features
-                feature = []
-                for i in range(num_neurons_per_feature):
-                    feature.append(eligible_neurons.pop(rand.randint(0, len(eligible_neurons) - 1)))
-                neural_input.append(feature)
-        if classes.count(j[0]) == 0:
-            classes.append(j[0])
-        features_set = True
-        inputset.append([j[0], j[1:]])
-    #return neural_input, inputset, eligible_neurons, classes
-    return neural_input, inputset, eligible_neurons, [1, 0]
+        for binary in j:
+            if int(binary) not in classes:
+                binarr = numpy.array([[0] for i in xrange(excite)])
+                for i in range(num_neurons_per_input):
+                    idx = eligible_neurons.pop(rand.randint(0, len(eligible_neurons) - 1))
+                    binarr[idx] = [1]
+                classes[int(binary)] = binarr 
+    return classes, eligible_neurons
 
 
 #### PARSE ARGS #### 
@@ -95,19 +105,24 @@ num_neurons
 """
 
 #dopamine
-synapses_per = 100
+synapses_per = num_neurons / 10
 dopamine = 0
 excite = int(.8 * num_neurons)
 inhib = int(.2 * num_neurons)
-num_neurons_per_feature = 50
-num_neurons_per_input = 1
+num_neurons_per_feature = num_neurons / 50
+num_neurons_per_input = num_neurons / 50
 tau_c = 500.0 #time constant for the STDP
 tau_d = 100.0  #time constant for the dopamine
-reward_wait_time = 500
-stimulus_interval = 500
+reward_wait_time = 60
+reward_time = -1        
+stimulus_interval = 100
 class0 = 0
 class1 = 0
 trainfile = 'basic.train'
+dopa_times = []
+class0_record = []
+class1_record = []
+last_input = None
 # Set up necessary arrays
 # Internal neuron variables. Synaptic weights and c.
 # in weights, rows are presyn & cols are psotsyn
@@ -167,9 +182,15 @@ d = gpuarray.to_gpu(numpy.array(d).astype(numpy.float32))
 
 
 #### /INITIALIZATION ####
-neural_input, inputset, eligible_neurons, classes = initInput(excite, trainfile, num_neurons_per_input)
+classes, eligible_neurons = initInput(excite, trainfile, num_neurons_per_input)
+
+neural_output = initOutput(eligible_neurons, classes, num_neurons_per_feature)
+
 #Need some times for stimulus to occur
-stimulus_times = range(50, sim_length,50)
+stimulus_times = range(100, sim_length ,stimulus_interval)
+stims = -numpy.ones(sim_length)
+for i in stimulus_times:
+    stims[i] = rand.randint(0,1)
 
 pp.pprint(stimulus_times)
 
@@ -270,7 +291,7 @@ for t in xrange(sim_length):
     # Input for a neuron is the sum of the synaptic weights of all neurons that
     # fired onto it
     #### also need to include input from basic.train
-    inp, arr = getInput(t, stimulus_times, neural_input, inputset, excite)
+    inp, clss = getInput(t, stims, classes)
     #print 'STIMETIMES: ' + str(inputset)
 
     ################################################################################
@@ -278,6 +299,7 @@ for t in xrange(sim_length):
         dopamine_time = t + rand.randint(20,reward_wait_time)
         last_stim_time = t
         last_input = inp
+        last_class = clss
         dopa_times.append(dopamine_time)
         class0_record.append(class0)
         class1_record.append(class1)
@@ -286,29 +308,28 @@ for t in xrange(sim_length):
 
     # should break this down into a kernel as well
     # determining the input is a bit more complex 
-    inhibitory = [[2.5 * rand.random()] for i in xrange(inhib)]
+    inhibitory = numpy.array([[2.5 * rand.random()] for i in xrange(inhib)])
 
-    if (arr == None and not input_delivered) or input_delivered:
+    if (inp == None and not input_delivered) or input_delivered:
         excitatory = [[5 * rand.random()] for i in xrange(excite)]
 
-    elif arr != None and not input_delivered: 
-        print arr
-        excitatory = [[arr + 5] for i in xrange(excite)]
-    excitatory.extend(inhibitory)
+    elif inp != None and not input_delivered: 
+        excitatory = inp
+    
+    excitatory = numpy.vstack((excitatory, inhibitory))
+
 
     #### Input is ready to go, now we need to calculate the total inputs/Izekivich model
     #    numpy.array(map(lambda x: x>=30 , v[0:excite+inhib])) 
     if t == 0:
-        input_vector = gpuarray.to_gpu(numpy.array(excitatory)) 
+        input_vector = gpuarray.to_gpu(excitatory)
         #MATRIX INPUT OP\
-        print testbay.shape
-        print v.shape
         fired = v > testbay
 
         #print fired * weights
     #update firetimes
     else:
-        input_vector.set(numpy.array(excitatory))
+        input_vector.set(excitatory)
         fired = v > testbay
         #print firetimes.shape
         #print fired.shape
@@ -370,8 +391,6 @@ for t in xrange(sim_length):
     v += 0.5 * (0.04 * pow(v,2) + 5 * v + 140 - u + next_input)
 
     u = u + a * (b * v - u)
-
-    print sum(fired.get())
     
     # itr = 0
     # for h in v.get():
@@ -385,6 +404,47 @@ for t in xrange(sim_length):
     #   itr+=1
     stdp_krnl(dopamine, c, fired, firetimes, weights, post_gpu)
 
+
+
+    #DETERMIN MOTOR NEURON OUTPUT
+    if last_input != None:
+        inc0, inc1 = checkOutput(fired, neural_output)
+        if t < last_stim_time + 20: #20 ms window for checking groups 1 vs 0
+            class0 += inc0
+            class1 += inc1
+        elif t == last_stim_time + 21:
+            tot = float(class0 + class1)
+            if tot != 0:
+                cl1p = class0 / tot
+                cl2p = class1 / tot
+            else:
+                cl1p = .5
+                cl2p = .5
+            #probs_file.write(str(t) + ' \t' + str(cl1p)+ ' \t' + str(cl2p) + '\n')
+        reward = False
+        if t in dopa_times:
+            dopa_times.remove(t)
+            if int(last_class) == 0 and cl1p > cl2p:
+                reward = True
+            if int(last_class) == 1 and cl2p > cl1p:
+                reward = True
+            print '*' * 30
+            print 'Reward Time: ', reward, ' that dopa Injected : class== ', last_class
+            print 'Class0: ', cl1p
+            print 'Class1: ', cl2p
+            input_delivered = False
+            last_input = None
+        if reward:
+            reward_time = t
+        ##Update Dopamine levels based on success with output
+        if reward_time == t:
+            reward = True
+        else:
+            reward = False
+        dopamine += -dopamine / tau_d + DA(t, reward_time, reward)
+        dopamine = max(dopamine, 0.0)
+        #dopa_file.write(str(t) + ' \t' + str(dopa) + '\n')
+
     #print sum(fired.get())
     #print v
 
@@ -393,9 +453,6 @@ for t in xrange(sim_length):
     # print fired.get()
     #should have the new voltages now
 
-    print 'ITERATION:'+ str(t)
-
-print firetimes
 """
 kernels list:
 

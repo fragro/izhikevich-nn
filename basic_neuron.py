@@ -33,16 +33,16 @@ class simulation(object):
         
     def neural_sim(self, trainfile, testfile):
         #initialize environment; inputs and outputs from the data
-        neurons = 500
-        time = 2000
+        neurons = 4100
+        time = 500
         excite = int(.8 * neurons)
         inhib = int(.2 * neurons)
         num_neurons_per_feature = 50
         num_neurons_per_input = 1
         tao_c = 500.0 #time constant for the STDP
         tao_d = 100.0  #time constant for the dopamine
-        reward_wait_time = 500
-        stimulus_interval = 500
+        reward_wait_time = 60
+        stimulus_interval = 100
         class0 = 0
         class1 = 0
         
@@ -126,7 +126,7 @@ class simulation(object):
             elif j != None and not input_delivered: 
                 input_delivered = True
                 I = [ j + 5, 2.5 * random.random(inhib)]                
-                print '*'*20 , 'Input Stimulus: ', t
+                #print '*'*20 , 'Input Stimulus: ', t
             if t == 0: fired = array(map(lambda x: x>=30 , v[0:excite+inhib])) #determine which neurons are firing at this time step
             for i in range(excite+inhib): 
                 if fired[i]: firetimes[i] = t #update fire times
@@ -156,7 +156,7 @@ class simulation(object):
             #record infividual neuron
             ind_fired.append(map(lambda x: min(30, x), v)) #record all neuron voltage potentials to record spiking behavior
             if t != 0: fired = array(map(lambda x: x>=30 , v[0:excite+inhib]))
-        
+            #print I
             #print 'update synapses'
             ### dc = –c/tao + STDP(t) * delta(t - tpre/tpost)
             #Now we update the synapses with dopamine/STDP induced weight change
@@ -195,20 +195,20 @@ class simulation(object):
                         S[0][i][syn_ind] = min(max(S[0][i][syn_ind],0),4)
             #record the c of a single synaptic link
             if max_c > .1 and c_pre != -1 and eligibility_trace == -1:
-                print 'pre: ', c_pre , ' ;;;post: ' , c_post
-                print max_c
-                print max_c_syn
+                #print 'pre: ', c_pre , ' ;;;post: ' , c_post
+                #print max_c
+                #print max_c_syn
                 eligibility_trace = 1
             elif eligibility_trace == 1:
                 c_file.write(str(t) + '\t' + str(c_pre) +'\t' + str(c_post) + '\t' + str(max_c) + '\t' + str(max_c_syn)  + '\n')
             if t % 20 == 0 and num_c != 0: 
-                print 'mean c: ', total_c/num_c ,  ' dopa: ', dopa
+                #print 'mean c: ', total_c/num_c ,  ' dopa: ', dopa
                 """ numFired=0
                 for i in fired:
                     if int(i) == 1:
                         numFired+=1
                 print 'Fired: ' , numFired"""
-                if total_synapses!=0.0: print 'mean synapse: ', total_synaptic_strength/total_synapses
+                #if total_synapses!=0.0: print 'mean synapse: ', total_synaptic_strength/total_synapses
             #print 't: ', t,'  ...dopa: ' , dopa
             
             
