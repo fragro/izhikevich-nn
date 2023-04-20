@@ -1,3 +1,5 @@
+# Simulates the Izhikevich model showing the effects of bursting neurons
+
 You will need python-libigraph to run the small world generation. 
 Run these to install it.
 sudo apt-get install libigraph0-dev python-setuptools
